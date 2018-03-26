@@ -93,7 +93,7 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
 
    ![Creation of Azure Function Apps](Assets/Images/CreateFunctionAppResources.png)
 
-6. For creating the Function app:
+6. For creating the Function app:
 
     a. Set a unique name in **Name** field.
     
@@ -109,4 +109,195 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
 
    ![Creating the Function App](Assets/Images/CreatingFunctionApp.png)
 
+#### Creating the Face Trainer Service
 
+1. Navigate to the Function app, click the **+** (create new) at the Functions tab and click the **create your own custom function** link to create a new function.
+
+   ![Creating a new function](Assets/Images/CreatingCustomFunction.png)
+
+2. Select _JavaScript_ (or _C#_) in the **Language** box and _Data Processing_ in the **Scenario** box. Then, choose the _Cosmos DB trigger_ with _JavaScript_ (or _C#_).
+
+   ![Choose the Cosmos DB trigger](Assets/Images/UseCosmosDBTrigger.png)
+
+3. Now you can set up the properties to create the Cosmos DB triggered function:
+
+    a. Type _FaceTrainerFunc_ (or any name you like) in the **Name** field.
+
+    b. Select or click the _new_ link at **Azure Cosmos DB account connection** field to connect the Cosmos DB you've just created.
+
+    c. Type _faces_ in the **Collection name** field.
+
+    d. Type _users_ in the **Database name** field.
+
+    e. Click the **Create** button to start creation.
+
+   ![Set up the Cosmos DB trigger](Assets/Images/SetupCosmosDBTrigger.png)
+
+4. Paste the following code segment to the **index.js**.
+
+    ```javascript
+    const req = require('request');
+
+    const FACE_API_ENDPOINT = 'https://eastasia.api.cognitive.microsoft.com/face/v1.0';
+    const FACE_API_KEY = '';
+    const PERSON_GROUP_ID = 'ServerlessDayPersonGroup';
+    const PERSON_GROUP_NAME = 'Serverless Day 工作坊群組';
+
+    const PERSON_GROUP_ENDPOINT = `${FACE_API_ENDPOINT}/persongroups/${PERSON_GROUP_ID}`;
+
+    module.exports = function (context, documents) {
+        if (!!documents && documents.length > 0) {
+
+            let pgId, pId;
+
+            // check the person group first.
+            ensurePersonGroupAsync(context)
+                .then((personGroupId) => {
+                    // store the personGroupId.
+                    pgId = personGroupId;
+
+                    let addingFacesPromises = [];
+                    documents.forEach(document => {
+                        addingFacesPromises.push(
+                            ensurePersonAsync(context, pgId, document)
+                                .then((personId, faces) => {
+                                    addPersistedFaces(context, pgID, personId, faces);
+                                })
+                        );
+                    });
+
+                    return Promise.all(addingFacesPromises);
+                })
+                .then(() => {
+                    context.log('[Final] Training person group...');
+                    // Invoking the train request to the person group.
+                    request({
+                        url: `${PERSON_GROUP_ENDPOINT}/train`,
+                        method: 'POST',
+                        headers: {
+                            'Ocp-Apim-Subscription-Key': FACE_API_KEY
+                        }
+                    }, () => {
+                        context.log('Done.')
+                        context.done(); 
+                    });
+                });
+        } else {
+            context.done();
+        }
+    }
+
+    function ensurePersonGroupAsync(context) {
+        return new Promise((resolve, reject) => {
+            context.log('[PersonGroup] Check if the person group is created...');
+
+            // compose the request.
+            let reqOpt = {
+                url: PERSON_GROUP_ENDPOINT,
+                method: 'GET',
+                headers: {
+                    'Ocp-Apim-Subscription-Key': FACE_API_KEY
+                },
+                json: true
+            };
+
+            request(reqOpt, (err, response, body) => {
+                if (body.error) {
+                    context.log(`[PersonGroup] Person group ${PERSON_GROUP_ID} does not exist. Start creating a new one...`);
+
+                    // create a new person group
+                    let reqCreatePG = {
+                        url: PERSON_GROUP_ENDPOINT,
+                        method: 'PUT',
+                        body: {
+                            'name': PERSON_GROUP_NAME
+                        },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Ocp-Apim-Subscription-Key': FACE_API_KEY
+                        },
+                        json: true
+                    };
+                    request(reqCreatePG, () => { resolve(PERSON_GROUP_ID); });
+                } else {
+                    context.log(`[PersonGroup] Person group ${PERSON_GROUP_ID} has existed.`);
+                    resolve(PERSON_GROUP_ID);
+                }
+            });
+        });
+    }
+
+    function ensurePersonAsync(context, personGroupId, person) {
+        return new Promise((resolve, reject) => {
+            context.log('[Person] Check if the person existed...');
+
+            let urlPerson = `${PERSON_GROUP_ENDPOINT}/persons/${person.personId}`;
+
+            let reqCheck = {
+                url: urlPerson,
+                method: 'GET',
+                headers: {
+                    'Ocp-Apim-Subscription-Key': FACE_API_KEY
+                },
+                json: true
+            };
+            request(reqCheck, (err, response, body) => {
+                if (body.error) {
+                    context.log('[Person] Person does not exist. Start creating a new one...');
+                    let reqCreate = {
+                        url: urlPerson,
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Ocp-Apim-Subscription-Key': FACE_API_KEY
+                        },
+                        body: {
+                            'name': person.name
+                        },
+                        json: true
+                    };
+                    request(reqCreate, () => {
+                        resolve(person.personId, person.faces);
+                    });
+                } else {
+                    context.log('[Person] Person exists.');
+                    resolve(person.personId, person.faces);
+                }
+            });
+        });
+    }
+
+    function addPersistedFacesAsync(context, personGroupId, personId, faces) {
+        let addFacePromises = [];
+        faces.forEach(face => {
+            addFacePromises.push(
+                addPersistedFaceAsync(context, personGroupId, personId, face)
+            );
+        });
+        return Promise.all(addFacePromises);
+    }
+
+    function addPersistedFaceAsync(context, personGroupId, personId, face) {
+        new Promise((resolve, reject) => {
+            context.log('[AddPersistedFaces] Adding person face...');
+
+            let reqAdd = {
+                url: `${PERSON_GROUP_ENDPOINT}/persons/${personId}/persistedFaces`,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Ocp-Apim-Subscription-Key': FACE_API_KEY
+                },
+                body {
+                    'url': face
+                },
+                json: true
+            };
+            request(reqAdd, (err, response, body) => {
+                resolve(body.persistedFaceId);
+            });
+        });
+    }
+    ```
+
+5. Test the function.
