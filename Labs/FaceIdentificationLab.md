@@ -306,7 +306,40 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
     }
     ```
 
-5. Test the function with following steps:
+5. Before we execute this function, if you use Node.js you have to restore the npm packages first. Navigate to the Function App's **Platform features** and click the **App Service Editor**.
+
+   ![Go to App Service Editor](Assets/Images/OpenAppServiceEditor.png)
+
+6. In App Service Editor, right click the `FaceTrainerFunc` folder to add a new file called _package.json_. 
+
+   ![Create a new package.json](Assets/Images/CreatePackageJSON.png)
+
+   Paste the code segment:
+
+   ```javascript
+   {
+       "name": "facetrainerfunc",
+       "version": "1.0.0",
+       "dependencies": {
+           "request": "^2.85.0"	
+       }
+   }
+   ```
+
+7. Open the console in the App Service Editor by clicking the console icon on the leftmost panel.
+
+   ![](Assets/Images/InstallPackageInConsole.png)
+
+   and type this commands in console:
+
+   ```cmd
+   \> cd FaceTrainerFunc
+   \FaceTrainerFunc> npm install
+   ```
+
+   After successfully installed the packages, you can close the App Service Editor and go back to the Function App portal.
+
+8. Test the function with following steps:
 
     a. Upload the face photo to the storage account you created at beginning. Put the file under `train/` container.
 
