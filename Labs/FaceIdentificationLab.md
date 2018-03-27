@@ -136,7 +136,7 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
 4. Paste the following code segment to the **index.js**.
 
     ```javascript
-    const req = require('request');
+    const request = require('request');
 
     const FACE_API_ENDPOINT = 'https://eastasia.api.cognitive.microsoft.com/face/v1.0';
     const FACE_API_KEY = '';
@@ -160,8 +160,9 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
                     documents.forEach(document => {
                         addingFacesPromises.push(
                             ensurePersonAsync(context, pgId, document)
-                                .then((personId, faces) => {
-                                    addPersistedFaces(context, pgID, personId, faces);
+                                .then((person) => {
+                                    context.log(`[Person] Adding persisted faces...${pgId}/${person.faces}`);
+                                    addPersistedFacesAsync(context, pgId, person.personId, person.faces);
                                 })
                         );
                     });
@@ -218,7 +219,10 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
                         },
                         json: true
                     };
-                    request(reqCreatePG, () => { resolve(PERSON_GROUP_ID); });
+                    request(reqCreatePG, () => { 
+                        context.log("[PersonGroup] Successfully created.")
+                        resolve(PERSON_GROUP_ID); 
+                    });
                 } else {
                     context.log(`[PersonGroup] Person group ${PERSON_GROUP_ID} has existed.`);
                     resolve(PERSON_GROUP_ID);
@@ -229,7 +233,7 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
 
     function ensurePersonAsync(context, personGroupId, person) {
         return new Promise((resolve, reject) => {
-            context.log('[Person] Check if the person existed...');
+            context.log(`[Person] Check if the person ${person.personId} existed...`);
 
             let urlPerson = `${PERSON_GROUP_ENDPOINT}/persons/${person.personId}`;
 
@@ -257,11 +261,11 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
                         json: true
                     };
                     request(reqCreate, () => {
-                        resolve(person.personId, person.faces);
+                        resolve(person);
                     });
                 } else {
                     context.log('[Person] Person exists.');
-                    resolve(person.personId, person.faces);
+                    resolve(person);
                 }
             });
         });
@@ -270,6 +274,7 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
     function addPersistedFacesAsync(context, personGroupId, personId, faces) {
         let addFacePromises = [];
         faces.forEach(face => {
+            context.log(`[AddPersistedFaces] Adding ${face}`);
             addFacePromises.push(
                 addPersistedFaceAsync(context, personGroupId, personId, face)
             );
@@ -279,7 +284,7 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
 
     function addPersistedFaceAsync(context, personGroupId, personId, face) {
         new Promise((resolve, reject) => {
-            context.log('[AddPersistedFaces] Adding person face...');
+            context.log('[AddPersistedFace] Adding person face...');
 
             let reqAdd = {
                 url: `${PERSON_GROUP_ENDPOINT}/persons/${personId}/persistedFaces`,
@@ -288,16 +293,40 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
                     'Content-Type': 'application/json',
                     'Ocp-Apim-Subscription-Key': FACE_API_KEY
                 },
-                body {
+                body: {
                     'url': face
                 },
                 json: true
             };
             request(reqAdd, (err, response, body) => {
+                context.log('[AddPersistedFace] Successfully added.');
                 resolve(body.persistedFaceId);
             });
         });
     }
     ```
 
-5. Test the function.
+5. Test the function with following steps:
+
+    a. Upload the face photo to the storage account you created at beginning. Put the file under `train/` container.
+
+    b. Get the SAS for the photo in order to access is via URL.
+
+    c. Run the function with the following test data (simulated Cosmos DB data in `faces` collection):
+
+    ```json
+    [
+        {
+            "id": "1",
+            "personId": "<PERSON_ID>",
+            "name": "<Name of the Person>",
+            "faces": [
+                "[THE PHOTO URL 1]",
+                "[THE PHOTO URL 2]",
+                ...
+            ]
+        }
+    ]
+    ```
+
+    d. Check the log window under the function editor to see if it works correctly.
