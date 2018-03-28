@@ -133,7 +133,47 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
 
    ![Set up the Cosmos DB trigger](Assets/Images/SetupCosmosDBTrigger.png)
 
-4. Paste the following code segment to the **index.js**.
+4. Click the **View files** in the right panel, modifying the **function.json** like this: 
+
+    > Note: Change the connections to yours.
+
+    ```javascript
+    {
+        "bindings": [
+            {
+                "type": "cosmosDBTrigger",
+                "name": "documents",
+                "direction": "in",
+                "leaseCollectionName": "leases",
+                "connectionStringSetting": "sldf20180329_DOCUMENTDB",
+                "databaseName": "users",
+                "collectionName": "faces",
+                "createLeaseCollectionIfNotExists": true
+            },
+            {
+                "type": "table",
+                "name": "personTable",
+                "tableName": "persons",
+                "connection": "sldf20189814_STORAGE",
+                "direction": "out"
+            },
+            {
+                "type": "table",
+                "name": "personEntity",
+                "tableName": "persons",
+                "connection": "sldf20189814_STORAGE",
+                "filter": "PartitionKey eq 'LearnedFace'",
+                "direction": "in",
+                "take": 50
+            }
+        ],
+        "disabled": false
+    }
+    ```
+
+5. Paste the following code segment to the **index.js**.
+
+    > Note: Fill in the Face API Key.
 
     ```javascript
     const request = require('request');
@@ -160,9 +200,9 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
                     documents.forEach(document => {
                         addingFacesPromises.push(
                             ensurePersonAsync(context, pgId, document)
-                                .then((person) => {
-                                    context.log(`[Person] Adding persisted faces...${pgId}/${person.faces}`);
-                                    addPersistedFacesAsync(context, pgId, person.personId, person.faces);
+                                .then((personId) => {
+                                    context.log(`[Person] Adding persisted faces...${pgId}/${personId}`);
+                                    addPersistedFacesAsync(context, pgId, personId, document.faces);
                                 })
                         );
                     });
@@ -233,48 +273,45 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
 
     function ensurePersonAsync(context, personGroupId, person) {
         return new Promise((resolve, reject) => {
-            context.log(`[Person] Check if the person ${person.personId} existed...`);
+            context.log(`[Person] Check if the person ${person.name} existed...`);
 
-            let urlPerson = `${PERSON_GROUP_ENDPOINT}/persons/${person.personId}`;
+            let result = context.bindings.personEntity.find((element) => element.RowKey == person.name);
+            if (result !== undefined) {
+                context.log(`[Person] Person ${result.PersonId} existed`);
+                resolve(result.PersonId);
+            } else {
+                let urlPerson = `${PERSON_GROUP_ENDPOINT}/persons`;
+                context.log(`[Person] Creating a new person...${urlPerson}`);
 
-            let reqCheck = {
-                url: urlPerson,
-                method: 'GET',
-                headers: {
-                    'Ocp-Apim-Subscription-Key': FACE_API_KEY
-                },
-                json: true
-            };
-            request(reqCheck, (err, response, body) => {
-                if (body.error) {
-                    context.log('[Person] Person does not exist. Start creating a new one...');
-                    let reqCreate = {
-                        url: urlPerson,
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Ocp-Apim-Subscription-Key': FACE_API_KEY
-                        },
-                        body: {
-                            'name': person.name
-                        },
-                        json: true
-                    };
-                    request(reqCreate, () => {
-                        resolve(person);
+                let reqCreate = {
+                    url: urlPerson,
+                    method: 'POST',
+                    json: true,
+                    headers: {
+                        'Ocp-Apim-Subscription-Key': FACE_API_KEY
+                    },
+                    body: {
+                        'name': person.name,
+                        'userData': JSON.stringify(person.data)
+                    }
+                };
+                context.bindings.personTable = [];
+                request(reqCreate, (err, response, body) => {
+                    context.bindings.personTable.push({
+                        'PartitionKey': 'LearnedFace',
+                        'RowKey': person.name,
+                        'PersonId': body.personId
                     });
-                } else {
-                    context.log('[Person] Person exists.');
-                    resolve(person);
-                }
-            });
+                    resolve(body.personId);
+                });
+            }
         });
     }
 
     function addPersistedFacesAsync(context, personGroupId, personId, faces) {
         let addFacePromises = [];
         faces.forEach(face => {
-            context.log(`[AddPersistedFaces] Adding ${face}`);
+            context.log(`[Add Faces] Adding ${face}`);
             addFacePromises.push(
                 addPersistedFaceAsync(context, personGroupId, personId, face)
             );
@@ -284,7 +321,7 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
 
     function addPersistedFaceAsync(context, personGroupId, personId, face) {
         new Promise((resolve, reject) => {
-            context.log('[AddPersistedFace] Adding person face...');
+            context.log('[AddPersistedFaces] Adding person face...');
 
             let reqAdd = {
                 url: `${PERSON_GROUP_ENDPOINT}/persons/${personId}/persistedFaces`,
@@ -299,18 +336,17 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
                 json: true
             };
             request(reqAdd, (err, response, body) => {
-                context.log('[AddPersistedFace] Successfully added.');
                 resolve(body.persistedFaceId);
             });
         });
     }
     ```
 
-5. Before we execute this function, if you use Node.js you have to restore the npm packages first. Navigate to the Function App's **Platform features** and click the **App Service Editor**.
+6. Before we execute this function, if you use Node.js you have to restore the npm packages first. Navigate to the Function App's **Platform features** and click the **App Service Editor**.
 
    ![Go to App Service Editor](Assets/Images/OpenAppServiceEditor.png)
 
-6. In App Service Editor, right click the `FaceTrainerFunc` folder to add a new file called _package.json_. 
+7. In App Service Editor, right click the `FaceTrainerFunc` folder to add a new file called _package.json_. 
 
    ![Create a new package.json](Assets/Images/CreatePackageJSON.png)
 
@@ -326,7 +362,7 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
    }
    ```
 
-7. Open the console in the App Service Editor by clicking the console icon on the leftmost panel.
+8. Open the console in the App Service Editor by clicking the console icon on the leftmost panel.
 
    ![](Assets/Images/InstallPackageInConsole.png)
 
@@ -339,7 +375,7 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
 
    After successfully installed the packages, you can close the App Service Editor and go back to the Function App portal.
 
-8. Test the function with following steps:
+9. Test the function with following steps:
 
     a. Upload the face photo to the storage account you created at beginning. Put the file under `train/` container.
 
@@ -351,7 +387,6 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
     [
         {
             "id": "1",
-            "personId": "<PERSON_ID>",
             "name": "<Name of the Person>",
             "faces": [
                 "[THE PHOTO URL 1]",
@@ -363,3 +398,133 @@ In this lab, we would use [Azure Congnitive Services: Face APIs](https://azure.m
     ```
 
     d. Check the log window under the function editor to see if it works correctly.
+
+#### Creating the Face Identification Service
+
+1. Follow the previous steps, create a new function called _FaceIdentifyFunc_ that using _BlobTrigger_.
+
+2. Configure the bindings by modifying the **function.json** file.
+
+    > Note: Change the connection to yours.
+
+    ```javascript
+    {
+        "bindings": [
+            {
+                "name": "image",
+                "type": "blobTrigger",
+                "direction": "in",
+                "path": "faces/{name}",
+                "connection": "sldf2018_STORAGE",
+                "dataType": "binary"
+            },
+            {
+                "type": "table",
+                "name": "outputTable",
+                "tableName": "identifications",
+                "connection": "sldf2018_STORAGE",
+                "direction": "out"
+            }
+        ],
+        "disabled": false
+    }
+    ```
+
+3. Paste the following code segments in **indes.js**.
+
+    > Note: Fill in your Face API access key.
+
+    ```javascript
+    const request = require('request');
+    
+    const FACE_API_KEY = '';
+    const FACE_API_ENDPOINT = 'https://eastasia.api.cognitive.microsoft.com/face/v1.0';
+    const FACE_PERSON_GROUP_ID = 'serverless-day-person-group';
+
+    module.exports = function(context, image) {
+        context.bindings.outputTable = [];
+        let fId;
+        getFaceIdAsync(context, image)
+            .then((faceId) => {
+                fId = faceId;
+                return identifyFace(context, faceId);
+            })
+            .then((personId) => {
+                return getPerson(context, personId);
+            })
+            .then((name, data) => {
+                data = data || {};
+                data.faceId = fId;
+                context.bindings.outputTable.push({
+                    'PartitionKey': 'IdentifiedFace',
+                    'RowKey': name,
+                    'UserData': data
+                });
+                context.log("Done.");
+                context.done();
+            });
+    };
+
+    function getFaceIdAsync(context, image) {
+        return new Promise((resolve, reject) => {
+            context.log("[Get FaceId] Getting face ID...");
+            request({
+                url: `${FACE_API_ENDPOINT}/detect?returnFaceLandmarks=false`,
+                method: 'POST',
+                body: image,
+                headers: {
+                    'Content-Type': 'application/octet-stream',
+                    'Ocp-Apim-Subscription-Key': FACE_API_KEY
+                }
+            }, (err, res, body) => {
+                let faces = JSON.parse(body);
+                resolve(faces[0].faceId);
+            });
+        });
+    }
+
+    function identifyFace(context, faceId) {
+        return new Promise((resolve, reject) => {
+            context.log(`[IDENTIFY] Identifying face ${faceId}....`);
+            request({
+                url: `${FACE_API_ENDPOINT}/identify`,
+                method: 'POST',
+                json: true,
+                headers: {
+                    'Ocp-Apim-Subscription-Key': FACE_API_KEY
+                },
+                body: {
+                    'personGroupId': FACE_PERSON_GROUP_ID,
+                    'faceIds':[
+                        faceId
+                    ]
+                }
+            }, (err, res, body) => {
+                let ans = body[0].candidates[0].personId;
+                context.log(`[IDENTIFY] Identified person: ${ans}`);
+                resolve(ans);
+            });
+        });
+    }
+
+    function getPerson(context, personId) {
+        return new Promise((resolve, reject) => {
+            request({
+                url: `${FACE_API_ENDPOINT}/persongroups/${FACE_PERSON_GROUP_ID}/persons/${personId}`,
+                method: 'GET',
+                json: true,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Ocp-Apim-Subscription-Key': FACE_API_KEY
+                }
+            }, (e, r, b) => {
+                context.log(`[GET PERSON] Got person ${b.name}`);
+                resolve(b.name, b.userData);
+            });
+        });
+    }
+    ```
+
+4. Follow the previous step, add a **package.json** file and add a dependency for `request` package.
+
+5. Upload an image file to the target folder to test if the identification works well.
